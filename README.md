@@ -81,10 +81,14 @@ Either way, run `npm install` in this directory first (needed for typechecking a
 Once this repository has a pushed remote, it can also be installed with:
 
 ```bash
-pi install git:github.com/<owner>/pi-github
+pi install git:github.com/hpstuff/pi-github
 ```
 
-(not set up automatically by this package — see [packages.md](https://pi.dev) for details on publishing).
+Once published to npm, it can also be installed with:
+
+```bash
+pi install npm:@hpstuff/pi-github
+```
 
 ## Development
 

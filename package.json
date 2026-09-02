@@ -1,11 +1,18 @@
 {
-	"name": "pi-github",
+	"name": "@hpstuff/pi-github",
 	"version": "0.1.0",
 	"private": false,
 	"type": "module",
 	"license": "MIT",
 	"description": "Browse and act on the current repo's open GitHub Pull Requests and Issues from a full-screen pi TUI.",
 	"keywords": ["pi-package"],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/hpstuff/pi-github.git"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
 	"scripts": {
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run"
