@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
 	buildIssueRowPlan,
 	buildPrRowPlan,
-	layoutIssueRow,
-	layoutPrRow,
+	layoutIssueRowLines,
+	layoutPrRowLines,
 	prStatusColor,
 } from "../src/ui/rows.ts";
 import type { IssueSummary, PullRequestSummary } from "../src/types.ts";
@@ -31,56 +31,60 @@ const baseIssue: IssueSummary = {
 	updatedAt: "2026-09-01T10:00:00Z",
 };
 
-describe("buildPrRowPlan / layoutPrRow", () => {
-	it("includes number, title, author, check state, and updated time", () => {
+describe("buildPrRowPlan / layoutPrRowLines", () => {
+	it("puts the check symbol and title on the first line, and number/author/time on the second", () => {
 		const plan = buildPrRowPlan(basePr, now);
-		const line = layoutPrRow(plan, 100);
-		expect(line).toContain("#42");
-		expect(line).toContain("@alice");
-		expect(line).toContain("3h ago");
-		expect(line).toContain("✓");
+		const { symbol, title, meta } = layoutPrRowLines(plan, 100);
+		expect(symbol).toBe("✓");
+		expect(title).toContain("Fix the login bug");
+		expect(meta).toContain("#42");
+		expect(meta).toContain("@alice");
+		expect(meta).toContain("3h ago");
 	});
 
-	it("shows a draft indicator only when the PR is a draft", () => {
-		const draftLine = layoutPrRow(buildPrRowPlan({ ...basePr, isDraft: true }, now), 100);
-		expect(draftLine).toContain("draft");
+	it("shows a draft indicator on the title only when the PR is a draft", () => {
+		const draft = layoutPrRowLines(buildPrRowPlan({ ...basePr, isDraft: true }, now), 100);
+		expect(draft.title).toContain("draft");
 
-		const readyLine = layoutPrRow(buildPrRowPlan({ ...basePr, isDraft: false }, now), 100);
-		expect(readyLine).not.toContain("draft");
+		const ready = layoutPrRowLines(buildPrRowPlan({ ...basePr, isDraft: false }, now), 100);
+		expect(ready.title).not.toContain("draft");
 	});
 
-	it("shows review counts", () => {
-		const line = layoutPrRow(buildPrRowPlan({ ...basePr, approvals: 2, changesRequested: 1 }, now), 100);
-		expect(line).toContain("2");
-		expect(line).toContain("1");
+	it("shows review counts in the meta line", () => {
+		const { meta } = layoutPrRowLines(buildPrRowPlan({ ...basePr, approvals: 2, changesRequested: 1 }, now), 100);
+		expect(meta).toContain("2");
+		expect(meta).toContain("1");
 	});
 
-	it("never exceeds the requested width, truncating the title", () => {
-		const line = layoutPrRow(buildPrRowPlan(basePr, now), 40);
-		expect(visibleWidth(line)).toBeLessThanOrEqual(40);
+	it("never lets the title or meta line exceed the requested width", () => {
+		const { title, meta } = layoutPrRowLines(buildPrRowPlan(basePr, now), 40);
+		expect(visibleWidth(title)).toBeLessThanOrEqual(40);
+		expect(visibleWidth(meta)).toBeLessThanOrEqual(40);
 	});
 
 	it("maps check state to a status color key", () => {
 		expect(prStatusColor(buildPrRowPlan({ ...basePr, checkState: "fail" }, now))).toBe("error");
 		expect(prStatusColor(buildPrRowPlan({ ...basePr, checkState: "pending" }, now))).toBe("warning");
 		expect(prStatusColor(buildPrRowPlan({ ...basePr, checkState: "pass" }, now))).toBe("success");
-		expect(prStatusColor(buildPrRowPlan({ ...basePr, checkState: "none" }, now))).toBe("dim");
+		expect(prStatusColor(buildPrRowPlan({ ...basePr, checkState: "none" }, now))).toBe("warning");
 	});
 });
 
-describe("buildIssueRowPlan / layoutIssueRow", () => {
-	it("includes number, title, author, comment count, labels, and updated time", () => {
-		const line = layoutIssueRow(buildIssueRowPlan(baseIssue, now), 100);
-		expect(line).toContain("#7");
-		expect(line).toContain("@bob");
-		expect(line).toContain("3");
-		expect(line).toContain("bug");
-		expect(line).toContain("p1");
-		expect(line).toContain("2h ago");
+describe("buildIssueRowPlan / layoutIssueRowLines", () => {
+	it("puts the title on the first line, and number/author/comments/labels/time on the second", () => {
+		const { title, meta } = layoutIssueRowLines(buildIssueRowPlan(baseIssue, now), 100);
+		expect(title).toContain("Crash on startup");
+		expect(meta).toContain("#7");
+		expect(meta).toContain("@bob");
+		expect(meta).toContain("3");
+		expect(meta).toContain("bug");
+		expect(meta).toContain("p1");
+		expect(meta).toContain("2h ago");
 	});
 
-	it("never exceeds the requested width", () => {
-		const line = layoutIssueRow(buildIssueRowPlan(baseIssue, now), 30);
-		expect(visibleWidth(line)).toBeLessThanOrEqual(30);
+	it("never lets the title or meta line exceed the requested width", () => {
+		const { title, meta } = layoutIssueRowLines(buildIssueRowPlan(baseIssue, now), 30);
+		expect(visibleWidth(title)).toBeLessThanOrEqual(30);
+		expect(visibleWidth(meta)).toBeLessThanOrEqual(30);
 	});
 });

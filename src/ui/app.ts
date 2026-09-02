@@ -3,8 +3,8 @@ import {
 	decodeKittyPrintable,
 	Markdown,
 	matchesKey,
-	SelectList,
 	truncateToWidth,
+	visibleWidth,
 	type Component,
 	type TUI,
 } from "@earendil-works/pi-tui";
@@ -29,7 +29,8 @@ import type {
 } from "../types.ts";
 import { filterIssues, filterPullRequests } from "./filter.ts";
 import { approveConfirmMessage, mergeConfirmMessage, mergeMethodLabel } from "./messages.ts";
-import { buildIssueRowPlan, buildPrRowPlan, layoutIssueRow, layoutPrRow } from "./rows.ts";
+import { buildIssueRowPlan, buildPrRowPlan, layoutIssueRowLines, layoutPrRowLines, prStatusColor } from "./rows.ts";
+import { TwoLineList } from "./two-line-list.ts";
 
 export interface AppUI {
 	confirm(title: string, message: string): Promise<boolean>;
@@ -62,8 +63,10 @@ type Screen =
 	| { kind: "pr-detail"; number: number; data: PullRequestDetail | null; loading: boolean; error: string | null }
 	| { kind: "issue-detail"; number: number; data: IssueDetail | null; loading: boolean; error: string | null };
 
-const LIST_OVERHEAD_LINES = 4; // header + blank + footer + margin
+const LIST_OVERHEAD_LINES = 10; // tabs + blank + chips + blank + footer + margin
 const MIN_VISIBLE_ROWS = 3;
+/** Left inset for list rows, so the selection background doesn't sit flush against the text. */
+const ROW_INSET = " ";
 
 /** Decodes a single typed printable character from raw terminal input, or undefined for control/navigation keys. */
 function decodePrintable(data: string): string | undefined {
@@ -82,7 +85,7 @@ export class GithubApp implements Component {
 	private pr: SectionState<PullRequestSummary> = { items: null, error: null, filterQuery: "", selectedNumber: null };
 	private issue: SectionState<IssueSummary> = { items: null, error: null, filterQuery: "", selectedNumber: null };
 	private screen: Screen = { kind: "list" };
-	private selectList: SelectList | null = null;
+	private list: TwoLineList<PullRequestSummary | IssueSummary> | null = null;
 	private account: string | undefined;
 	private scrollPos = 0;
 
@@ -94,9 +97,7 @@ export class GithubApp implements Component {
 		this.closed = true;
 	}
 
-	invalidate(): void {
-		this.selectList?.invalidate();
-	}
+	invalidate(): void { }
 
 	// --- Data loading -------------------------------------------------------
 
@@ -123,7 +124,7 @@ export class GithubApp implements Component {
 				this.issue.error = result.error;
 			}
 		}
-		this.selectList = null;
+		this.list = null;
 		this.requestRender();
 	}
 
@@ -256,7 +257,7 @@ export class GithubApp implements Component {
 			const state = this.currentSectionState();
 			if (state.filterQuery !== "") {
 				state.filterQuery = "";
-				this.selectList = null;
+				this.list = null;
 				this.requestRender();
 			} else {
 				this.closed = true;
@@ -267,7 +268,7 @@ export class GithubApp implements Component {
 
 		if (matchesKey(data, "tab")) {
 			this.section = this.section === "pr" ? "issue" : "pr";
-			this.selectList = null;
+			this.list = null;
 			if (this.currentSectionState().items === null) {
 				void this.loadSection(this.section);
 			}
@@ -286,7 +287,7 @@ export class GithubApp implements Component {
 			const state = this.currentSectionState();
 			if (state.filterQuery.length > 0) {
 				state.filterQuery = state.filterQuery.slice(0, -1);
-				this.selectList = null;
+				this.list = null;
 				this.requestRender();
 			}
 			return;
@@ -295,13 +296,13 @@ export class GithubApp implements Component {
 		if (printable && printable.length === 1) {
 			const state = this.currentSectionState();
 			state.filterQuery += printable;
-			this.selectList = null;
+			this.list = null;
 			this.requestRender();
 			return;
 		}
 
 		if (matchesKey(data, "enter")) {
-			const item = this.selectList?.getSelectedItem();
+			const item = this.list?.getSelectedItem();
 			if (item) {
 				const number = Number(item.value);
 				if (this.section === "pr") void this.openPrDetail(number);
@@ -310,8 +311,17 @@ export class GithubApp implements Component {
 			return;
 		}
 
-		this.selectList?.handleInput(data);
-		this.requestRender();
+		if (matchesKey(data, "up")) {
+			this.list?.moveUp();
+			this.requestRender();
+			return;
+		}
+
+		if (matchesKey(data, "down")) {
+			this.list?.moveDown();
+			this.requestRender();
+			return;
+		}
 	}
 
 	private handleDetailInput(data: string): void {
@@ -366,13 +376,20 @@ export class GithubApp implements Component {
 		return Math.max(MIN_VISIBLE_ROWS, (this.opts.tui.terminal.rows || 24) - LIST_OVERHEAD_LINES);
 	}
 
+	/** Each list row spans two terminal lines (title + meta), so halve the available rows. */
+	private visibleListItems(): number {
+		return Math.max(1, Math.floor(this.visibleRows() / 2));
+	}
+
 	// --- Rendering -------------------------------------------------------------
 
 	render(width: number): string[] {
 		const lines: string[] = [];
 
 		if (this.screen.kind === "list") {
-			lines.push(this.renderListHeader(width));
+			lines.push(this.renderListTabs(width));
+			lines.push("");
+			lines.push(this.renderListChips(width));
 			lines.push("");
 			lines.push(...this.renderListBody(width));
 			lines.push("");
@@ -386,11 +403,19 @@ export class GithubApp implements Component {
 		return lines.map((line) => truncateToWidth(line, width, "", false));
 	}
 
-	private renderListHeader(width: number): string {
+	private renderListTabs(width: number): string {
 		const theme = this.opts.theme;
-		const prTab = this.section === "pr" ? theme.bold(theme.fg("accent", "[Pull Requests]")) : theme.fg("dim", "Pull Requests");
-		const issueTab = this.section === "issue" ? theme.bold(theme.fg("accent", "[Issues]")) : theme.fg("dim", "Issues");
-		return truncateToWidth(`${theme.fg("text", this.opts.repo)}   ${prTab}  ${issueTab}`, width);
+		const tab = (label: string, active: boolean) => {
+			const padded = `  ${label}  `;
+			return active ? theme.bg("selectedBg", theme.bold(theme.fg("text", padded))) : theme.fg("dim", padded);
+		};
+		return truncateToWidth(`${tab("Pull Requests", this.section === "pr")}   ${tab("Issues", this.section === "issue")}`, width);
+	}
+
+	private renderListChips(width: number): string {
+		const theme = this.opts.theme;
+		const repoChip = theme.bg("toolPendingBg", theme.fg("muted", `  repo: ${this.opts.repo}  `));
+		return truncateToWidth(repoChip, width);
 	}
 
 	private renderListFooter(): string {
@@ -423,49 +448,66 @@ export class GithubApp implements Component {
 
 		if (filtered.length === 0) {
 			lines.push(theme.fg("warning", `No matches for "${state.filterQuery}".`));
-			this.selectList = null;
+			this.list = null;
 			return lines;
 		}
 
-		if (!this.selectList) {
-			this.selectList = this.buildSelectList(filtered);
+		if (!this.list) {
+			this.list = this.buildList(filtered);
 		}
 
-		lines.push(...this.selectList.render(width));
+		lines.push(...this.list.render(width));
 		return lines;
 	}
 
-	private buildSelectList(items: (PullRequestSummary | IssueSummary)[]): SelectList {
+	private buildList(items: (PullRequestSummary | IssueSummary)[]): TwoLineList<PullRequestSummary | IssueSummary> {
 		const now = new Date();
-		const listItems = items.map((item) => {
-			const label =
-				this.section === "pr"
-					? layoutPrRow(buildPrRowPlan(item as PullRequestSummary, now), 200)
-					: layoutIssueRow(buildIssueRowPlan(item as IssueSummary, now), 200);
-			return { value: String(item.number), label };
-		});
+		const theme = this.opts.theme;
+		const section = this.section;
 
-		const visible = Math.min(listItems.length, this.visibleRows());
-		const selectList = new SelectList(listItems, Math.max(1, visible), {
-			selectedPrefix: (t) => this.opts.theme.fg("accent", t),
-			selectedText: (t) => this.opts.theme.bg("selectedBg", t),
-			description: (t) => this.opts.theme.fg("dim", t),
-			scrollInfo: (t) => this.opts.theme.fg("dim", t),
-			noMatch: (t) => this.opts.theme.fg("warning", t),
+		const listItems = items.map((item) => ({ value: String(item.number), data: item }));
+
+		const renderRow = (item: PullRequestSummary | IssueSummary, isSelected: boolean, width: number): [string, string] => {
+			// Meta line needs to read against the row highlight when selected, so it can't stay as dim there.
+			const metaColor = isSelected ? "muted" : "dim";
+			const innerWidth = Math.max(1, width - ROW_INSET.length);
+			if (section === "pr") {
+				const plan = buildPrRowPlan(item as PullRequestSummary, now);
+				const { symbol, title, meta } = layoutPrRowLines(plan, innerWidth);
+				const line1 = `${ROW_INSET}${theme.fg(prStatusColor(plan), symbol)} ${theme.bold(theme.fg("text", title))}`;
+				const line2 = theme.fg(metaColor, `${ROW_INSET}  ${meta}`);
+				return [line1, line2];
+			}
+			const plan = buildIssueRowPlan(item as IssueSummary, now);
+			const { title, meta } = layoutIssueRowLines(plan, innerWidth);
+			const line1 = `${ROW_INSET}${theme.bold(theme.fg("text", title))}`;
+			const line2 = theme.fg(metaColor, `${ROW_INSET}  ${meta}`);
+			return [line1, line2];
+		};
+
+		const highlightRow = (line: string, width: number): string => {
+			const pad = Math.max(0, width - visibleWidth(line));
+			return theme.bg("selectedBg", line + " ".repeat(pad));
+		};
+
+		const list = new TwoLineList(listItems, this.visibleListItems(), {
+			renderRow,
+			highlightRow,
+			scrollInfo: (t) => theme.fg("dim", t),
 		});
 
 		const state = this.currentSectionState();
 		if (state.selectedNumber !== null) {
 			const index = listItems.findIndex((item) => item.value === String(state.selectedNumber));
-			if (index >= 0) selectList.setSelectedIndex(index);
+			if (index >= 0) list.setSelectedIndex(index);
 		}
-		selectList.onSelectionChange = (item) => {
+		list.onSelectionChange = (item) => {
 			state.selectedNumber = Number(item.value);
 		};
-		const initial = selectList.getSelectedItem();
+		const initial = list.getSelectedItem();
 		if (initial) state.selectedNumber = Number(initial.value);
 
-		return selectList;
+		return list;
 	}
 
 	private renderPrDetail(width: number): string[] {
