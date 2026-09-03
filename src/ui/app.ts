@@ -400,6 +400,11 @@ export class GithubApp implements Component {
 			lines.push(...this.renderIssueDetail(width));
 		}
 
+		// Pad to the terminal height so the overlay fills the full screen instead of
+		// shrinking to the content's natural size (the overlay is sized to min(content, maxHeight)).
+		const rows = this.opts.tui.terminal.rows || 24;
+		while (lines.length < rows) lines.push("");
+
 		return lines.map((line) => truncateToWidth(line, width, "", false));
 	}
 

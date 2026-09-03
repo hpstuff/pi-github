@@ -1,6 +1,6 @@
 {
-	"name": "@hpstuff/pi-github",
-	"version": "0.1.0",
+	"name": "@rumen.rusanov/pi-github",
+	"version": "0.1.1",
 	"private": false,
 	"type": "module",
 	"license": "MIT",

@@ -30,18 +30,29 @@ export default function (pi: ExtensionAPI) {
 
 			const limit = await getFetchLimit({ cwd: ctx.cwd });
 
-			await ctx.ui.custom<void>((tui, theme, _keybindings, done) => {
-				return new GithubApp({
-					repo: repoResult.repo,
-					cwd: ctx.cwd,
-					exec,
-					limit,
-					ui: ctx.ui,
-					theme,
-					tui,
-					done,
-				});
-			});
+			await ctx.ui.custom<void>(
+				(tui, theme, _keybindings, done) => {
+					return new GithubApp({
+						repo: repoResult.repo,
+						cwd: ctx.cwd,
+						exec,
+						limit,
+						ui: ctx.ui,
+						theme,
+						tui,
+						done,
+					});
+				},
+				{
+					overlay: true,
+					overlayOptions: {
+						width: "100%",
+						maxHeight: "100%",
+						anchor: "center",
+						margin: 0,
+					},
+				},
+			);
 		},
 	});
 }

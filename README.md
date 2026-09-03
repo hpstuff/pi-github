@@ -87,7 +87,7 @@ pi install git:github.com/hpstuff/pi-github
 Once published to npm, it can also be installed with:
 
 ```bash
-pi install npm:@hpstuff/pi-github
+pi install npm:@rumen.rusanov/pi-github
 ```
 
 ## Development
